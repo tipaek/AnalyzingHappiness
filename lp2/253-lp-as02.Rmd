@@ -1,0 +1,174 @@
+---
+title: "253-lp-as02"
+author: "Timothy Paek"
+date: "2025-02-10"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Libraries
+```{r}
+suppressPackageStartupMessages(
+  {
+    library(tidyverse)
+    library(readxl) # to read excel files
+    library(ggplot2) # to visualize data
+  }
+)
+```
+
+## Finding Suitable Data
+
+To do my analysis, I will use several datasets documented in Learning Portfolio Assignment #1, focusing on well-being and happiness. Specifically, I will examine two datasets:
+
+Wellbeing dataset: https://www.gallup.com/analytics/468179/global-wellbeing-initiative-dataset.aspx
+World happiness dataset: https://www.kaggle.com/datasets/unsdsn/world-happiness
+```{r}
+# both these datasets are from the Global Wellbeing Initiative, which was collected 2020 and up
+wellbeing_path <- "Global Wellbeing Initiative Dataset.xlsx"
+global_wellbeing <- read_excel(wellbeing_path, sheet="Global") 
+country_wellbeing <- read_excel(wellbeing_path, sheet="Country Level")
+
+# this dataset is from the World Happiness Report conducted in 2019
+world_happiness <- read_csv("world_happiness_report/2019.csv")
+
+```
+Both datasets provide country-specific indicators on various well-being metrics. However, the Global Wellbeing Initiative data is structured as a nested, multi-header, multi-index Excel table, making it more complex to parse. If I can successfully extract and organize the data, there can be significant analysis done.
+
+In country_wellbeing, there are the following features:
+Struggling Index, Suffering Index, Thriving, Index, Health Problems, Count On to Help, Experience Calmness Yesterday, Feel at Peace With Life, Exciting Life or Calm Life, Various Aspects of Life in Balance, Main Purpose in Life				, Focus on Taking Care of Themselves or Taking Care of Others, Enjoy the Work You Do Every Day, Work Significantly Improves the Lives of Others Outside of Household, Many Choices in Type of Work.
+Each have their own subcategories. Additionally, these are all wrt countries, age, gender, employment, per capita income, feelings about household income, urban/rural. 
+
+In wellbeing global, it is the same except without being broken down by country.
+
+In world_happiness, there are the following features:
+overall rank, country or region, score, gdp per capita, social support, healthy life expectancy, freedom to make life choices, generosity, and perceptions of corruption.
+
+# Research Goals
+
+I aim to explore the relationships between well-being indicators and overall happiness at the national level. Here are some questions I wish to answer:
+
+Which well-being indicators are the strongest predictors of national happiness?
+What factors show positive or negative correlations with happiness?
+Which indicators appear to be irrelevant?
+How does a country’s GDP relate to well-being metrics? Do wealthier nations experience higher levels of well-being?
+How do these relationships vary across different demographics such as age, economic status, and geographic location?
+
+## Data Pre-processing Example
+First, I load the data. There are no column names, so I manually assign them.
+```{r}
+bridges <- read_csv("bridges.data.version1(1).csv", col_names = FALSE)
+
+colnames(bridges) <- c("ID", "RIVER", "LOCATION", "ERECTED", "PURPOSE", "LENGTH", 
+                        "LANES", "CLEAR_G", "T_OR_D", "MATERIAL", "SPAN", "REL_L", "TYPE")
+
+head(bridges)
+```
+
+Then, I address all missing values by converting '?' to NA. I also count missing values per column and handle them accordingly (by replacing them with median or mode). I pick median for numerical as it is more robust to outliers. I pick mode for lanes as it represents the most likely category given a data point.  
+```{r}
+bridges[bridges == "?"] <- NA
+
+colSums(is.na(bridges))
+
+# For missing values:
+# Replace numeric cols with median
+# Replace categorical cols with most common value (mode)
+
+# helper function to get the mode
+impute_mode <- function(x) {
+  unique_x <- unique(x[!is.na(x)])
+  unique_x[which.max(tabulate(match(x, unique_x)))]
+}
+
+# I replace missing values accordingly (helper function and median function)
+bridges <- bridges %>%
+  mutate(
+    LENGTH = as.numeric(LENGTH),
+    LANES = as.numeric(LANES),
+    ERECTED = as.numeric(ERECTED),
+    LENGTH = ifelse(is.na(LENGTH), median(LENGTH, na.rm = TRUE), LENGTH),
+    LANES = ifelse(is.na(LANES), median(LANES, na.rm = TRUE), LANES),
+    CLEAR_G = ifelse(is.na(CLEAR_G), impute_mode(CLEAR_G), CLEAR_G),
+    MATERIAL = ifelse(is.na(MATERIAL), impute_mode(MATERIAL), MATERIAL),
+    SPAN = ifelse(is.na(SPAN), impute_mode(SPAN), SPAN),
+    TYPE = ifelse(is.na(TYPE), impute_mode(TYPE), TYPE)
+  )
+
+# then I double check that there are no more na values
+colSums(is.na(bridges))
+```
+
+Next, I detect and deal with outliers by using boxplots for length and lanes. 
+Then, I only keep values within the IQR range (removing outliers). 
+I do this because outlier values can lead to models being overly influenced by a few extreme observations. Additionally, it could lead to misleading conclusions by skewing various metrics (like mean).
+
+```{r}
+# length
+ggplot(bridges, aes(y = LENGTH)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Bridge Length")
+
+# lanes
+ggplot(bridges, aes(y = LANES)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Number of Lanes")
+
+# get the upper and lower bound from iqr for length
+iqr_length <- IQR(bridges$LENGTH, na.rm = TRUE)
+upper_bound_length <- quantile(bridges$LENGTH, 0.75, na.rm = TRUE) + 1.5 * iqr_length
+lower_bound_length <- quantile(bridges$LENGTH, 0.25, na.rm = TRUE) - 1.5 * iqr_length
+
+# filter outliers
+bridges <- bridges %>%
+  filter(LENGTH >= lower_bound_length & LENGTH <= upper_bound_length)
+
+# Check after removing outliers
+ggplot(bridges, aes(y = LENGTH)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Bridge Length After Removing Outliers")
+
+
+```
+
+Then, I prepare the data to find relationships (plotting just as an example).
+I use boxplot for length.
+I use bar charts for the other two (material and number of lanes).
+
+```{r}
+# LENGTH VS PURPOSE
+ggplot(bridges, aes(x = PURPOSE, y = LENGTH)) +
+  geom_boxplot() +
+  labs(title = "Bridge Length vs Purpose",
+       x = "Purpose",
+       y = "Length of the Bridge") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# LANES VS MATERIAL
+ggplot(bridges, aes(x = MATERIAL, fill = as.factor(LANES))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Number of Lanes by Bridge Material",
+       x = "Material",
+       fill = "Number of Lanes") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# SPAN VS NUMBER OF LANES
+ggplot(bridges, aes(x = SPAN, fill = as.factor(LANES))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Span vs Number of Lanes",
+       x = "Span",
+       fill = "Number of Lanes") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+Here, we find that highway bridges tend to be longer than other kinds. Steel bridges tend to have more lanes than other kinds. Finally, we see that bridges with medium length spans tend to have 2 lanes.
+
+
+
+
+
